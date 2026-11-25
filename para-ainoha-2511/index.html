@@ -136,6 +136,10 @@
   .save{border:1px solid var(--blush);color:var(--ink);background:var(--blush);border-radius:99px;padding:14px 22px}
   .save:disabled{opacity:.5}
   .savebox p{margin-top:10px;color:var(--dim);min-height:12px}
+  .cartabox{text-align:center;margin-top:18px}
+  .cartabox .btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  .save.ghost{background:transparent;border-color:var(--blush2)}
+  .cartabox p{margin-top:10px;color:var(--dim);min-height:12px}
   .frase{font-weight:400;font-style:italic;font-size:clamp(38px,11vw,48px);line-height:1;text-align:center;margin:56px 0 -6px;color:var(--rose)}
   .lockcard{margin-top:50px;border:1px dashed var(--line);border-radius:12px;padding:24px 20px;text-align:center}
   .lockcard p{font-size:28px;line-height:1.15;margin:10px 0 12px}
@@ -276,6 +280,13 @@
         <div class="date mono">25 de noviembre, 2026</div>
         <div class="hand" id="hand"></div>
         <div class="hand sign" id="firma"></div>
+      </div>
+      <div class="cartabox">
+        <div class="btns">
+          <button class="save mono" id="cartaShare">Compartir carta</button>
+          <button class="save ghost mono" id="cartaSave">Descargar</button>
+        </div>
+        <p class="mono" id="cartamsg"></p>
       </div>
       <h2 class="frase" id="frase"></h2>
       <div class="board" id="board"></div>
@@ -556,6 +567,7 @@ function abrirSobre(animar){
   $("frase").textContent = D.frase || "";
   pintarFotos(); pintarLater();
   $("letter").classList.add("show");
+  prepararCarta();
   if (animar) setTimeout(() => $("letter").scrollIntoView({ behavior:"smooth", block:"start" }), 1100);
 }
 env.addEventListener("click", () => abrirSobre(true));
@@ -632,6 +644,116 @@ $("save").onclick = async () => {
   } catch(e) { msg.textContent = "No se pudo crear la imagen"; }
   b.disabled = false;
 };
+
+/* carta como imagen (para guardar o compartir) */
+function partirLineas(c, texto, max){
+  const out = [];
+  for (const par of texto.split("\n")) {
+    if (!par.trim()) { out.push(""); continue; }
+    let l = "";
+    for (const w of par.split(/\s+/)) {
+      const t = l ? l + " " + w : w;
+      if (l && c.measureText(t).width > max) { out.push(l); l = w; } else l = t;
+    }
+    out.push(l);
+  }
+  return out;
+}
+async function cartaImagen(){
+  await document.fonts.ready;
+  await Promise.all(["40px 'La Belle Aurore'", "26px 'DM Mono'", "italic 80px 'Instrument Serif'"]
+    .map(f => document.fonts.load(f).catch(() => {})));
+  const W = 1080, M = 56, padX = 120, maxW = W - padX * 2;
+  const texto = D.carta || "", firma = D.firma || "", frase = D.frase || "";
+  const top = 330, bottom = frase ? 330 : 200;
+  // Si es larga, mejor letra legible (40) aunque la imagen quede más alta que una historia
+  // Busca la letra más grande con la que la carta cabe en formato historia (1080×1920)
+  const med = document.createElement("canvas").getContext("2d");
+  let fs = 46, lineas = [], lh = 0;
+  for (; fs >= 36; fs -= 2) {
+    med.font = `${fs}px 'La Belle Aurore', cursive`;
+    lineas = partirLineas(med, texto, maxW); lh = Math.round(fs * 1.55);
+    if (top + (lineas.length + 2) * lh + bottom <= 1920) break;
+  }
+  if (fs < 36) {
+    fs = 40; med.font = `${fs}px 'La Belle Aurore', cursive`;
+    lineas = partirLineas(med, texto, maxW); lh = Math.round(fs * 1.55);
+  }
+  const H = Math.max(1920, top + (lineas.length + 2) * lh + bottom);
+
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const c = cv.getContext("2d");
+  c.fillStyle = "#f5efe7"; c.fillRect(0, 0, W, H);
+  c.fillStyle = "rgba(0,0,0,.025)";
+  for (let k = 0; k < 9000; k++) c.fillRect(Math.random() * W, Math.random() * H, 2, 2);
+
+  // hoja
+  c.save(); c.shadowColor = "rgba(120,80,60,.28)"; c.shadowBlur = 50; c.shadowOffsetY = 24;
+  c.fillStyle = "#fffbf7"; c.fillRect(M, M, W - M * 2, H - M * 2); c.restore();
+
+  // encabezado
+  c.fillStyle = "#8a7d73"; c.textAlign = "right"; c.font = "500 22px 'DM Mono', monospace";
+  c.fillText("2 5   D E   N O V I E M B R E ,   2 0 2 6", W - padX, 150);
+  c.fillStyle = "#b8606f"; c.textAlign = "left"; c.font = "italic 76px 'Instrument Serif', serif";
+  c.fillText("para Ainoha", padX, 250);
+
+  // renglones y texto a mano
+  const y0 = top + lh;
+  const total = lineas.length + 2;
+  c.strokeStyle = "rgba(184,96,111,.16)"; c.lineWidth = 2;
+  for (let i = 0; i < total; i++) {
+    const y = y0 + i * lh + Math.round(fs * 0.32);
+    c.beginPath(); c.moveTo(M + 40, y); c.lineTo(W - M - 40, y); c.stroke();
+  }
+  c.fillStyle = "#2d2520"; c.font = `${fs}px 'La Belle Aurore', cursive`; c.textAlign = "left";
+  lineas.forEach((l, i) => l && c.fillText(l, padX, y0 + i * lh));
+  c.textAlign = "right";
+  c.fillText(firma, W - padX, y0 + (lineas.length + 1) * lh);
+
+  // frase final
+  if (frase) {
+    c.fillStyle = "#b8606f"; c.textAlign = "center"; c.font = "italic 62px 'Instrument Serif', serif";
+    c.fillText(frase, W / 2, H - M - 150);
+    c.font = "500 20px 'DM Mono', monospace"; c.fillStyle = "#9a8b80";
+    c.fillText("F E L I Z   C U M P L E A Ñ O S", W / 2, H - M - 90);
+  }
+  return new Promise(r => cv.toBlob(r, "image/png"));
+}
+let cartaArchivo = null, cartaPreparando = null;
+function prepararCarta(){
+  if (!cartaPreparando) {
+    cartaPreparando = cartaImagen()
+      .then(b => (cartaArchivo = new File([b], "carta-para-ainoha.png", { type: "image/png" })))
+      .catch(() => { cartaPreparando = null; return null; });
+  }
+  return cartaPreparando;
+}
+async function usarCarta(accion){
+  const msg = $("cartamsg");
+  let file = cartaArchivo;
+  if (!file) { msg.textContent = "Preparando…"; file = await prepararCarta(); }
+  if (!file) { msg.textContent = "No se pudo crear la imagen"; return; }
+  const puedeCompartir = navigator.canShare && navigator.canShare({ files:[file] });
+  // En iPhone/iPad la forma segura de guardar es el menú de compartir → “Guardar imagen”
+  if (puedeCompartir && (accion === "compartir" || esIOS)) {
+    try {
+      await navigator.share({ files:[file] });
+      msg.textContent = accion === "compartir" ? "" : "Listo";
+    } catch (e) {
+      msg.textContent = e && e.name === "NotAllowedError" ? "Ya está lista, toca otra vez"
+        : accion === "compartir" ? "" : "Elige “Guardar imagen”";
+    }
+    if (accion !== "compartir" && !msg.textContent) msg.textContent = "Elige “Guardar imagen”";
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(file); a.download = file.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  msg.textContent = accion === "compartir" ? "Este navegador no comparte archivos: la descargué" : "Descargada";
+}
+$("cartaShare").onclick = () => usarCarta("compartir");
+$("cartaSave").onclick = () => usarCarta("descargar");
 
 function pintarVideo(){
   const u = (D.video || "").trim(); if (!u) return;
